@@ -1,0 +1,34 @@
+name: Build and publish ML-DSA-44 FreeIPA
+
+on:
+  push:
+    branches:
+      - mldsa44
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: github.repository == 'Enucatl/freeipa-container' && github.ref == 'refs/heads/mldsa44'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE: ghcr.io/enucatl/freeipa-server
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build patched image
+        run: docker build --pull --label "org.opencontainers.image.revision=$GITHUB_SHA" -f Dockerfile.mldsa -t "$IMAGE:sha-$GITHUB_SHA" .
+      - name: Check ML-DSA compatibility
+        run: docker run --rm --network none --hostname ipa.home.arpa --add-host ipa.home.arpa:127.0.0.2 --entrypoint python3 "$IMAGE:sha-$GITHUB_SHA" /usr/local/libexec/test-mldsa.py
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish verified image
+        run: |
+          docker tag "$IMAGE:sha-$GITHUB_SHA" "$IMAGE:mldsa44"
+          docker push "$IMAGE:sha-$GITHUB_SHA"
+          docker push "$IMAGE:mldsa44"
