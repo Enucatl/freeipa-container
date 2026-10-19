@@ -4,7 +4,7 @@ run-name: Build and test FreeIPA containers${{ github.event_name == 'workflow_di
 on:
   push:
     branches-ignore:
-      - mldsa44
+      - main
   pull_request:
   workflow_dispatch:
     inputs:

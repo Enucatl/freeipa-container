@@ -1,7 +1,0 @@
-FROM docker.io/freeipa/freeipa-server:almalinux-10@sha256:811ca9aad63e2529d0f983e616e11717ac012cb2da186a0e6b44b3e07d18ad85
-
-LABEL org.opencontainers.image.source="https://github.com/Enucatl/freeipa-container"
-
-COPY patches/mldsa44.patch /usr/local/libexec/mldsa44.patch
-COPY tests/test-mldsa.py /usr/local/libexec/test-mldsa.py
-RUN patch --verbose -p0 --fuzz=0 < /usr/local/libexec/mldsa44.patch

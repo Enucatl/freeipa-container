@@ -1,24 +1,18 @@
 --- /usr/lib/python3.12/site-packages/ipalib/x509.py
 +++ /usr/lib/python3.12/site-packages/ipalib/x509.py
-@@ -319,8 +319,10 @@
- 
-     @property
-     def public_key_info_bytes(self):
+@@ -46 +46 @@
+-    Encoding, PublicFormat, PrivateFormat, load_pem_private_key
++    Encoding, PrivateFormat, load_pem_private_key
+@@ -322,2 +322 @@
 -        return self._cert.public_key().public_bytes(
 -            encoding=Encoding.DER, format=PublicFormat.SubjectPublicKeyInfo)
-+        certificate, _ = decoder.decode(
-+            self._cert.public_bytes(Encoding.DER),
-+            asn1Spec=rfc2459.Certificate())
-+        return encoder.encode(certificate['tbsCertificate']['subjectPublicKeyInfo'])
- 
-     @property
-     def extended_key_usage(self):
++        return self.__get_der_field('subjectPublicKeyInfo')
 --- /usr/lib/python3.12/site-packages/ipaserver/install/httpinstance.py
 +++ /usr/lib/python3.12/site-packages/ipaserver/install/httpinstance.py
-@@ -305,34 +305,31 @@
-             f.write(pkey_passwd)
- 
-         if self.pkcs12_info:
+@@ -30,0 +31,2 @@
++from cryptography.exceptions import UnsupportedAlgorithm
++from cryptography.hazmat.primitives.serialization import load_der_public_key
+@@ -309,22 +311,22 @@
 -            p12_certs, p12_priv_keys = certs.pkcs12_to_certkeys(
 -                *self.pkcs12_info)
 -            keys_dict = {
@@ -42,7 +36,7 @@
 -            # We only handle one server cert
 -            self.cert = server_certs_keys[0][0]
 +            p12_file, p12_password = self.pkcs12_info
-+            with ipautil.write_tmp_file(p12_password) as password_file:
++            with ipautil.write_tmp_file(p12_password or '') as password_file:
 +                args = [paths.OPENSSL, 'pkcs12', '-in', p12_file,
 +                        '-passin', 'file:' + password_file.name]
 +                cert_pem = ipautil.run(
@@ -53,12 +47,17 @@
 +            key_spki = ipautil.run(
 +                [paths.OPENSSL, 'pkey', '-pubout', '-outform', 'DER'],
 +                stdin=key_pem, nolog_output=True).raw_output
-+            server_certs = [c for c in certificates
-+                            if c.public_key_info_bytes == key_spki]
++            try:
++                key_numbers = load_der_public_key(key_spki).public_numbers()
++                server_certs = [c for c in certificates
++                                if c.public_key().public_numbers() == key_numbers]
++            except (UnsupportedAlgorithm, ValueError):
++                server_certs = [c for c in certificates
++                                if c.public_key_info_bytes == key_spki]
 +            if len(server_certs) != 1:
 +                raise RuntimeError("Could not find a unique server cert in import")
 +            self.cert = server_certs[0]
-             x509.write_certificate(self.cert, paths.HTTPD_CERT_FILE)
+@@ -332,5 +334,7 @@
 -            x509.write_pem_private_key(
 -                server_certs_keys[0][1],
 -                paths.HTTPD_KEY_FILE,
@@ -71,6 +70,3 @@
 +            with open(paths.HTTPD_KEY_FILE, 'wb') as key_file:
 +                os.fchmod(key_file.fileno(), 0o600)
 +                key_file.write(encrypted_key)
- 
-             if self.ca_is_configured:
-                 self.start_tracking_certificates()

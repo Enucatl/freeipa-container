@@ -6,6 +6,10 @@ name=ipa-mldsa-probe-$(cat /proc/sys/kernel/random/uuid)
 volume=$name-data
 network=$name-net
 cleanup() {
+    if [ "$?" -ne 0 ]; then
+        docker logs "$name" >&2 || true
+        docker exec "$name" tail -n 100 /var/log/ipaserver-install.log >&2 || true
+    fi
     docker rm -f "$name" >/dev/null 2>&1 || true
     docker volume rm "$volume" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
@@ -34,8 +38,8 @@ Path('password').write_text(password)
 Path('/data/ipa-server-install-options').write_text('--admin-password='+password+'\n--ds-password='+password+'\n')
 PY
 GEN
-docker run -d --name "$name" --runtime=sysbox-runc --hostname ipa.home.arpa --network "$network" -v "$volume":/data "$image" no-exit --unattended --realm HOME.ARPA --domain home.arpa --hostname ipa.home.arpa --no-pkinit --no-ntp --no-host-dns --dirsrv-cert-file /data/probe/server.crt --dirsrv-cert-file /data/probe/server.key --http-cert-file /data/probe/server.crt --http-cert-file /data/probe/server.key --ca-cert-file /data/probe/chain.crt --dirsrv-pin= --http-pin= >/dev/null
-# Block on systemd's oneshot unit rather than polling from Codex.
+docker run -d --name "$name" --tmpfs /run --tmpfs /tmp --sysctl net.ipv6.conf.all.disable_ipv6=0 --hostname ipa.home.arpa --network "$network" -v "$volume":/data "$image" no-exit --unattended --realm HOME.ARPA --domain home.arpa --hostname ipa.home.arpa --no-pkinit --no-ntp --no-host-dns --dirsrv-cert-file /data/probe/server.crt --dirsrv-cert-file /data/probe/server.key --http-cert-file /data/probe/server.crt --http-cert-file /data/probe/server.key --ca-cert-file /data/probe/chain.crt --dirsrv-pin= --http-pin= >/dev/null
+# Wait for systemd, then block until installation finishes.
 timeout 600 docker exec "$name" bash -c 'while ! test -S /run/dbus/system_bus_socket; do sleep 1; done; systemctl start ipa-server-configure-first.service'
 
 docker exec -i "$name" bash -s <<'VERIFY'

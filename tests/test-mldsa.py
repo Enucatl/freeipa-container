@@ -25,7 +25,7 @@ def run(*args: str, data: bytes | None = None) -> bytes:
     return subprocess.run(args, input=data, check=True, capture_output=True).stdout
 
 
-for algorithm in ["ML-DSA-44", "RSA:2048"]:
+for algorithm in ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "RSA:2048", "EC"]:
     with tempfile.TemporaryDirectory(prefix="ipa-mldsa-") as directory:
         root = Path(directory)
 
@@ -45,6 +45,8 @@ for algorithm in ["ML-DSA-44", "RSA:2048"]:
                 "-subj",
                 "/CN=" + subject,
             ]
+            if algorithm == "EC":
+                args += ["-pkeyopt", "ec_paramgen_curve:P-256"]
             if ca:
                 args += [
                     "-x509",
@@ -59,6 +61,11 @@ for algorithm in ["ML-DSA-44", "RSA:2048"]:
             """Sign a disposable certificate with its test issuer."""
             ext = root / (name + ".cnf")
             ext.write_text(extensions)
+            forced_key = (
+                ["-force_pubkey", str(root / "compressed.pub")]
+                if name == "server" and algorithm == "EC"
+                else []
+            )
             run(
                 "openssl",
                 "x509",
@@ -76,6 +83,7 @@ for algorithm in ["ML-DSA-44", "RSA:2048"]:
                 str(ext),
                 "-out",
                 str(root / (name + ".crt")),
+                *forced_key,
             )
 
         req("ca", "probe-root", ca=True)
@@ -86,6 +94,19 @@ for algorithm in ["ML-DSA-44", "RSA:2048"]:
             "basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n",
         )
         req("server", "ipa.home.arpa")
+        if algorithm == "EC":
+            # A compressed certificate key must match an uncompressed private key.
+            (root / "compressed.pub").write_bytes(
+                run(
+                    "openssl",
+                    "pkey",
+                    "-in",
+                    str(root / "server.key"),
+                    "-pubout",
+                    "-ec_conv_form",
+                    "compressed",
+                )
+            )
         sign(
             "server",
             "intermediate",
@@ -100,9 +121,20 @@ for algorithm in ["ML-DSA-44", "RSA:2048"]:
         source_cert = root / "server.crt"
         source_key = root / "server.key"
         cert = x509.load_certificate_from_file(str(source_cert))
-        assert cert.public_key_info_bytes == run(
+        expected_spki = run(
             "openssl", "pkey", "-in", str(source_key), "-pubout", "-outform", "DER"
         )
+
+        if algorithm == "EC":
+            from cryptography.hazmat.primitives.serialization import load_der_public_key
+
+            assert cert.public_key_info_bytes != expected_spki
+            assert (
+                cert.public_key().public_numbers()
+                == load_der_public_key(expected_spki).public_numbers()
+            )
+        else:
+            assert cert.public_key_info_bytes == expected_spki
 
         p12, password, ca = load_pkcs12(
             [str(source_cert), str(source_key)],
@@ -148,12 +180,18 @@ for algorithm in ["ML-DSA-44", "RSA:2048"]:
             "-outform",
             "DER",
         )
-        assert output_spki == cert.public_key_info_bytes
+        if algorithm == "EC":
+            assert (
+                load_der_public_key(output_spki).public_numbers()
+                == cert.public_key().public_numbers()
+            )
+        else:
+            assert output_spki == expected_spki
         assert (
             x509.load_certificate_from_file(
                 str(root / "http.crt")
             ).public_key_info_bytes
-            == output_spki
+            == cert.public_key_info_bytes
         )
         p12.close()
 
