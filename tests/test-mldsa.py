@@ -11,7 +11,9 @@ from unittest.mock import patch
 assert not Path("/etc/ipa/ca.crt").exists(), "Refusing an installed IPA server"
 # The upstream image keeps its trust store behind /data until its normal init runs.
 if not Path("/etc/pki/tls/cert.pem").exists():
-    shutil.copytree("/data-template/etc/pki", "/data/etc/pki", dirs_exist_ok=True)
+    shutil.copytree(
+        "/data-template/etc/pki", "/data/etc/pki", symlinks=True, dirs_exist_ok=True
+    )
 
 from ipalib import x509
 from ipaserver.install.installutils import load_pkcs12
