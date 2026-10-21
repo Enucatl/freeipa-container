@@ -40,9 +40,9 @@ jobs:
         run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: ./.github/actions/docker-cgroups-ubuntu-22
       - name: Build image
-        run: docker build --pull --label "org.opencontainers.image.revision=$REVISION" -f Dockerfile.almalinux-10 -t "$IMAGE:sha-$REVISION" .
+        run: docker build --pull --label "org.opencontainers.image.revision=$REVISION" -f Dockerfile.centos-10-stream -t "$IMAGE:sha-$REVISION" .
       - name: Check certificate compatibility
-        run: docker run --rm --network none --hostname ipa.home.arpa --add-host ipa.home.arpa:127.0.0.2 -v "$PWD/tests/test-mldsa.py:/test-mldsa.py:ro" --entrypoint python3 "$IMAGE:sha-$REVISION" /test-mldsa.py
+        run: docker run --rm --network none --hostname ipa.home.arpa --add-host ipa.home.arpa:127.0.0.2 -v "$PWD/tests/test-mldsa.py:/test-mldsa.py:ro" --entrypoint python3 "$IMAGE:sha-$REVISION" -I /test-mldsa.py
       - name: Check a complete ML-DSA installation
         run: tests/full-install-mldsa.sh "$IMAGE:sha-$REVISION"
       - name: Check a standard installation and replica

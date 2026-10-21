@@ -8,6 +8,10 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import cryptography
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+print("cryptography: " + cryptography.__version__)
 assert not Path("/etc/ipa/ca.crt").exists(), "Refusing an installed IPA server"
 # The upstream image keeps its trust store behind /data until its normal init runs.
 if not Path("/etc/pki/tls/cert.pem").exists():
@@ -17,7 +21,7 @@ if not Path("/etc/pki/tls/cert.pem").exists():
 
 from ipalib import x509
 from ipaserver.install.installutils import load_pkcs12
-from ipaserver.install import httpinstance
+from ipaserver.install import httpinstance, ipa_server_certinstall
 
 
 def run(*args: str, data: bytes | None = None) -> bytes:
@@ -45,6 +49,8 @@ for algorithm in ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "RSA:2048", "EC"]:
                 "-subj",
                 "/CN=" + subject,
             ]
+            if algorithm.startswith("ML-DSA"):
+                args += ["-provparam", "ml-dsa.output_formats=seed-only"]
             if algorithm == "EC":
                 args += ["-pkeyopt", "ec_paramgen_curve:P-256"]
             if ca:
@@ -125,16 +131,8 @@ for algorithm in ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "RSA:2048", "EC"]:
             "openssl", "pkey", "-in", str(source_key), "-pubout", "-outform", "DER"
         )
 
-        if algorithm == "EC":
-            from cryptography.hazmat.primitives.serialization import load_der_public_key
-
-            assert cert.public_key_info_bytes != expected_spki
-            assert (
-                cert.public_key().public_numbers()
-                == load_der_public_key(expected_spki).public_numbers()
-            )
-        else:
-            assert cert.public_key_info_bytes == expected_spki
+        assert cert.public_key_info_bytes == expected_spki
+        source_private_key = load_pem_private_key(source_key.read_bytes(), None)
 
         p12, password, ca = load_pkcs12(
             [str(source_cert), str(source_key)],
@@ -169,6 +167,15 @@ for algorithm in ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "RSA:2048", "EC"]:
             httpinstance.HTTPInstance._HTTPInstance__setup_ssl(fake)
         assert (root / "http.key").stat().st_mode & 0o777 == 0o600
         assert b"BEGIN ENCRYPTED PRIVATE KEY" in (root / "http.key").read_bytes()
+        installed_key = load_pem_private_key(
+            (root / "http.key").read_bytes(), (root / "http-password").read_bytes()
+        )
+        assert installed_key.public_key() == source_private_key.public_key()
+        if algorithm.startswith("ML-DSA"):
+            assert (
+                installed_key.private_bytes_raw()
+                == source_private_key.private_bytes_raw()
+            )
         output_spki = run(
             "openssl",
             "pkey",
@@ -180,13 +187,7 @@ for algorithm in ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "RSA:2048", "EC"]:
             "-outform",
             "DER",
         )
-        if algorithm == "EC":
-            assert (
-                load_der_public_key(output_spki).public_numbers()
-                == cert.public_key().public_numbers()
-            )
-        else:
-            assert output_spki == expected_spki
+        assert output_spki == expected_spki
         assert (
             x509.load_certificate_from_file(
                 str(root / "http.crt")
@@ -194,6 +195,23 @@ for algorithm in ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "RSA:2048", "EC"]:
             == cert.public_key_info_bytes
         )
         p12.close()
+
+        renewal = SimpleNamespace(
+            args=[str(source_cert), str(source_key)],
+            options=SimpleNamespace(pin=None, cert_name=None),
+        )
+        renewed_cert, renewed_key, _ = (
+            ipa_server_certinstall.ServerCertInstall.load_pkcs12(
+                renewal, ca_chain_fname=str(chain), host_name="ipa.home.arpa"
+            )
+        )
+        assert renewed_cert == cert
+        assert renewed_key.public_key() == source_private_key.public_key()
+        if algorithm.startswith("ML-DSA"):
+            assert (
+                renewed_key.private_bytes_raw()
+                == source_private_key.private_bytes_raw()
+            )
 
         req("untrusted", "untrusted-root", ca=True)
         for label, hostname, private_key, trust in [
@@ -216,5 +234,5 @@ for algorithm in ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "RSA:2048", "EC"]:
                 raise AssertionError("Accepted " + label)
         print(
             algorithm
-            + ": full-chain import, HTTP encrypted key export, hostname/key/chain rejection passed"
+            + ": full-chain import, HTTP key export, certificate renewal, hostname/key/chain rejection passed"
         )
