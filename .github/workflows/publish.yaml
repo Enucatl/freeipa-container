@@ -1,0 +1,80 @@
+name: Test and publish FreeIPA
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-main
+  # App pushes must not cancel the scheduled run before it publishes.
+  cancel-in-progress: ${{ github.event_name != 'push' || github.event.sender.type != 'Bot' }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'Enucatl/freeipa-container' && github.ref == 'refs/heads/main' && (github.event_name != 'push' || github.event.sender.type != 'Bot')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/enucatl/freeipa-server
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Rebase on upstream
+        if: github.event_name == 'schedule'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/freeipa/freeipa-container.git
+          git fetch upstream master
+          git rebase upstream/master
+      - name: Identify image revision
+        run: echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/docker-cgroups-ubuntu-22
+      - name: Build image
+        run: docker build --pull --label "org.opencontainers.image.revision=$REVISION" -f Dockerfile.centos-10-stream -t "$IMAGE:sha-$REVISION" .
+      - name: Check certificate compatibility
+        run: docker run --rm --network none --hostname ipa.home.arpa --add-host ipa.home.arpa:127.0.0.2 -v "$PWD/tests/test-mldsa.py:/test-mldsa.py:ro" --entrypoint python3 "$IMAGE:sha-$REVISION" -I /test-mldsa.py
+      - name: Check a complete ML-DSA installation
+        run: tests/full-install-mldsa.sh "$IMAGE:sha-$REVISION"
+      - name: Check a standard installation and replica
+        run: VOLUME=freeipa-test-data tests/run-master-and-replica.sh "$IMAGE:sha-$REVISION"
+      - name: Generate GitHub App token
+        if: github.event_name == 'schedule'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.AUTO_REBASE_PUSHER_CLIENT_ID }}
+          private-key: ${{ secrets.AUTO_REBASE_PUSHER_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+      - name: Update main after successful tests
+        if: github.event_name == 'schedule'
+        env:
+          ORIGINAL_REVISION: ${{ github.sha }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          # Expand APP_TOKEN only inside Git's credential helper.
+          # shellcheck disable=SC2016
+          git -c credential.helper= \
+            -c 'credential.helper=!f() { printf "%s\n" "username=x-access-token" "password=$APP_TOKEN"; }; f' \
+            push --force-with-lease="refs/heads/main:$ORIGINAL_REVISION" origin HEAD:main
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish verified image
+        run: |
+          docker tag "$IMAGE:sha-$REVISION" "$IMAGE:latest"
+          docker push "$IMAGE:sha-$REVISION"
+          docker push "$IMAGE:latest"
