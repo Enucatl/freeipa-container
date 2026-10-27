@@ -1,0 +1,41 @@
+--- /usr/lib/python3.12/site-packages/ipaserver/install/certs.py
++++ /usr/lib/python3.12/site-packages/ipaserver/install/certs.py
+@@ -93,2 +93,3 @@
+         paths.OPENSSL, "pkcs12", "-nocerts",
++        "-provparam", "ml-dsa.output_formats=seed-only",
+         "-in", p12_fname, "-out", pem_fname,
+@@ -116,3 +117,4 @@
+     """
+-    args = [paths.OPENSSL, "pkcs12", "-in", p12_fname, "-nodes"]
++    args = [paths.OPENSSL, "pkcs12", "-in", p12_fname, "-nodes",
++            "-provparam", "ml-dsa.output_formats=seed-only"]
+     if p12_passwd:
+@@ -124 +126 @@
+-    pems = ipautil.run(args).raw_output
++    pems = ipautil.run(args, nolog_output=True).raw_output
+--- /usr/lib/python3.12/site-packages/ipaserver/install/httpinstance.py
++++ /usr/lib/python3.12/site-packages/ipaserver/install/httpinstance.py
+@@ -309,17 +309,10 @@
+                 *self.pkcs12_info)
+-            keys_dict = {
+-                k.public_key().public_numbers(): k
+-                for k in p12_priv_keys
+-            }
+-            certs_keys = [
+-                (c, keys_dict.get(c.public_key().public_numbers()))
+-                for c in p12_certs
++            server_certs_keys = [
++                (c, k) for c in p12_certs for k in p12_priv_keys
++                if c.public_key() == k.public_key()
+             ]
+-            server_certs_keys = [
+-                (c, k) for c, k in certs_keys if k is not None
+-            ]
+-
+-            if not server_certs_keys:
++
++            if len(server_certs_keys) != 1:
+                 raise RuntimeError(
+-                    "Could not find a suitable server cert in import in %s"
++                    "Could not find a unique server cert in import in %s"
+                     % self.pkcs12_info[0]
