@@ -1,3 +1,56 @@
+## What is this fork about?
+
+This fork adds support for ML-DSA certificates to the CentOS Stream 10 FreeIPA
+image. ML-DSA is a digital signature algorithm designed to resist attacks
+from quantum computers. We focus on ML-DSA-44. We also test ML-DSA-65 and
+ML-DSA-87.
+
+Use certificates from your own certificate authority for the FreeIPA HTTPS
+service and LDAP over TLS (LDAPS). Install the server without the built-in
+Dogtag certificate authority. Use the standard `--http-cert-file`,
+`--dirsrv-cert-file`, and `--ca-cert-file` options. Use `--no-pkinit` for this
+setup. Clients must support ML-DSA and trust your certificate authority.
+Dogtag certificate issuance and Kerberos PKINIT with ML-DSA are not covered.
+
+Certificate signatures prove the identity of a server. This identity check
+also needs protection from quantum attacks. Filippo
+Valsorda recommends ML-DSA-44 for signatures and private certificates in
+[(Post-Quantum) Cryptographic Right Answers](https://words.filippo.io/right-answers/).
+ML-DSA protects signatures. TLS key exchange is a separate choice.
+
+`Dockerfile.centos-10-stream` uses the distro's cryptography package (49.0.0)
+and applies one small patch. FreeIPA extracts ML-DSA private keys in
+seed-only format and matches certificates through public-key equality.
+Its existing key writer encrypts the HTTPS key. This also covers
+certificate replacement with `ipa-server-certinstall`. Certificate chain
+and hostname checks stay in place. RSA and EC certificates remain
+supported. Other distribution Dockerfiles are unchanged from upstream.
+
+Pull the image with `docker pull ghcr.io/enucatl/freeipa-server:latest`.
+For a fixed version, use `ghcr.io/enucatl/freeipa-server:sha-<commit>` or an
+image digest. Build locally with:
+
+```sh
+docker build -f Dockerfile.centos-10-stream -t freeipa-server .
+```
+
+`main` is the only fork branch. Each push builds and tests the image before
+publishing `latest` and the commit tag. A newer push cancels an older run.
+Each day at 04:23 UTC, the same job rebases the fork on
+`freeipa/freeipa-container`'s `master` branch. It tests the result before it
+updates `main` and publishes the image. A rebase conflict or a failed test
+stops the update. The previous image stays available.
+
+Tests cover ML-DSA, RSA, and EC certificate import, encrypted HTTPS keys,
+and rejection of an incorrect hostname, key, or certificate chain. They also
+check a new ML-DSA server and certificate replacement through Kerberos,
+HTTPS, and LDAPS, plus a standard server and replica. Existing server
+upgrades need separate validation.
+
+The original upstream README follows.
+
+---
+
 # FreeIPA server container
 
 This repository contains `Dockerfile`s and additional files for

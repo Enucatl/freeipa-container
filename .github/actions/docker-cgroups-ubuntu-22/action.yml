@@ -1,4 +1,5 @@
 name: 'Enable userns-remapped docker setup to work with cgroups v2 on Ubuntu 22.04 and newer'
+description: 'Enable Docker user namespace remapping for systemd container tests'
 runs:
   using: 'composite'
   steps:
