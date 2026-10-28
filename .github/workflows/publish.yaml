@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Rebase on upstream
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -50,7 +50,7 @@ jobs:
       - name: Check a standard installation and replica
         run: VOLUME=freeipa-test-data tests/run-master-and-replica.sh "$IMAGE:sha-$REVISION"
       - name: Generate GitHub App token
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
@@ -59,7 +59,7 @@ jobs:
           permission-contents: write
           permission-workflows: write
       - name: Update main after successful tests
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
           ORIGINAL_REVISION: ${{ github.sha }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
