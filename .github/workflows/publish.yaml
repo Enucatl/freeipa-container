@@ -76,5 +76,15 @@ jobs:
       - name: Publish verified image
         run: |
           docker tag "$IMAGE:sha-$REVISION" "$IMAGE:latest"
-          docker push "$IMAGE:sha-$REVISION"
-          docker push "$IMAGE:latest"
+          for tag in "sha-$REVISION" latest; do
+            for attempt in 1 2 3; do
+              if docker push "$IMAGE:$tag"; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              echo "Retrying push of $IMAGE:$tag after attempt $attempt"
+              sleep 5
+            done
+          done
